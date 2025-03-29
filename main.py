@@ -50,12 +50,9 @@ class ICMP:
 
 def udp_sender(message, subnet):
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sender:
-        logging.info(f"Будет отправлено сообщение '{message}' на: ")
-        ipAdresses = []
+        logging.info(f"На новые подключенные устр-ва будет отправлено сообщение '{message}'")
         for ip in ipaddress.ip_network(subnet).hosts():
             sender.sendto(bytes(message, 'utf-8'), (str(ip), 65212))
-            ipAdresses.append(ip)
-        logging.info(ipAdresses)
 
 
 class Scanner:
@@ -119,10 +116,6 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    # if len(sys.argv) == 2:
-    #     host = sys.argv[1]
-    # else:
-    #     host = args.host
     s = Scanner(args.host)
     time.sleep(1)
     t = threading.Thread(target=udp_sender, args=(args.message, args.subnet))
