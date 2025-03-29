@@ -1,19 +1,18 @@
-import socket
+import sys
+import ipaddress
 import struct
+import os
+import socket
 import threading
 import time
-import ipaddress
-import os
-import sys
+import argparse
+import logging
 
 
-SUBNET: str = "10.0.0.0/24"
-MESSAGE: str = "I'm Java-warrior"
-
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 class IP:
-    def __init__(self, buff = None):        #Инциализация экземпляров класса IP
+    def __init__(self, buff=None):
         header = struct.unpack('<BBHHHBBH4s4s', buff)
-
         self.ver = header[0] >> 4
         self.ihl = header[0] & 0xF
 
@@ -27,17 +26,18 @@ class IP:
         self.src = header[8]
         self.dst = header[9]
 
-        #Байтовые ip-адреса в человекочитаемый формат
+        # IP-адреса понятные человеку
         self.src_address = ipaddress.ip_address(self.src)
         self.dst_address = ipaddress.ip_address(self.dst)
 
-        #Определение протокола по номеру
+        # сопоставляем константы протоколов с их названием
         self.protocol_map = {1: "ICMP", 2: "IGMP", 6: "TCP", 17: "UDP"}
         try:
             self.protocol = self.protocol_map[self.protocol_num]
         except Exception as e:
-            print('%s No protocol for %s' % (e, self.protocol_num))
+            logging.error(f'{e} No protocol for {self.protocol_num}')
             self.protocol = str(self.protocol_num)
+
 
 class ICMP:
     def __init__(self, buff):
@@ -48,11 +48,12 @@ class ICMP:
         self.id = header[3]
         self.seq = header[4]
 
-#Отправка UDP-пакетов с сообщением
-def udp_sender():
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sender:   #создание сокет: socket.AF_INET- исп-ся ipv4; socket.SOCK_DGRAM - сокет исп-ет протокол UDP
-        for ip in ipaddress.ip_network(SUBNET).hosts():
-            sender.sendto(bytes(MESSAGE, 'utf-8'), (str(ip), 65212))
+def udp_sender(message, subnet):
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sender:
+        logging.info(f"На новые подключенные устр-ва будет отправлено сообщение '{message}'")
+        for ip in ipaddress.ip_network(subnet).hosts():
+            sender.sendto(bytes(message, 'utf-8'), (str(ip), 65212))
+
 
 class Scanner:
     def __init__(self, host):
@@ -68,15 +69,13 @@ class Scanner:
         if os.name == 'nt':
             self.socket.ioctl(socket.SIO_RCVALL, socket.RCVALL_ON)
 
-    def sniff(self):
+    def sniff(self, message, subnet):
         host_up = set([f'{str(self.host)} *'])
         try:
             while True:
-
                 # Читаем пакет
                 raw_buffer = self.socket.recvfrom(65535)[0]
 
-                # создаем IP-заголовок из первых 20 байтов
                 ip_header = IP(raw_buffer[0:20])
 
                 # Нас интересует ICMP-заголовок из пакета
@@ -88,35 +87,37 @@ class Scanner:
                     icmp_header = ICMP(buf)
                     # ищем тип и код 3
                     if icmp_header.type == 3 and icmp_header.code == 3:
-                        if ipaddress.ip_address(ip_header.src_address) in ipaddress.IPv4Network(SUBNET):
+                        if ipaddress.ip_address(ip_header.src_address) in ipaddress.IPv4Network(subnet):
                             # Проверяем, содержит ли буфер наше слово
-                            if raw_buffer[len(raw_buffer) - len(MESSAGE):] == bytes(MESSAGE, 'utf-8'):
+                            if raw_buffer[len(raw_buffer) - len(message):] == bytes(message, 'utf-8'):
                                 tgt = str(ip_header.src_address)
                                 if tgt != self.host and tgt not in host_up:
                                     host_up.add(str(ip_header.src_address))
-                                    print(f'Host Up: {tgt}')
+                                    logging.info(f'Host Up: {tgt}')
 
         except KeyboardInterrupt:
+            # если мы в Windows, выключаем неизбирательный режим
             if os.name == 'nt':
                 self.socket.ioctl(socket.SIO_RCVALL, socket.RCVALL_OFF)
-            print('\nUser interrupted.')
+            logging.info('User interrupted.')
 
         if host_up:
-            print(f'\n\nSummary: Hosts up on {SUBNET}')
+            logging.info(f'\n\nSummary: Hosts up on {subnet}')
         for host in sorted(host_up):
-            print(f'{host}')
-        print('')
+            logging.info(f'{host}')
+        logging.info('')
         sys.exit()
 
 if __name__ == '__main__':
-    if len(sys.argv) == 2:
-        host = sys.argv[1]
-    else:
-        host = '10.0.0.101'
+    parser = argparse.ArgumentParser(description='UDP Sniffer and Sender')
+    parser.add_argument('--subnet', type=str, required=True, help='Subnet in CIDR notation (e.g., 10.0.0.0/24)')
+    parser.add_argument('--message', type=str, required=True, help='Message to send')
+    parser.add_argument('--host', type=str, default='10.0.0.101', help='Host IP address to bind to')
 
-    s = Scanner(host)
+    args = parser.parse_args()
 
+    s = Scanner(args.host)
     time.sleep(1)
-    t = threading.Thread(target=udp_sender)
+    t = threading.Thread(target=udp_sender, args=(args.message, args.subnet))
     t.start()
-    s.sniff()
+    s.sniff(args.message, args.subnet)
