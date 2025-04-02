@@ -40,21 +40,18 @@ class IP:
 
 
 class ICMP:
-    def __init__(self, buff):
-        header = struct.unpack('BBHHH', buff)
-        self.type = header[0]
-        self.code = header[1]
-        self.sum = header[2]
-        self.id = header[3]
-        self.seq = header[4]
+    def __init__(self, raw_header):
+        if not raw_header:
+            raise ValueError("Empty ICMP header")
+        self.type = raw_header[0]
+        self.code = raw_header[1]
+        self.checksum = int.from_bytes(raw_header[2:4], byteorder='big')
 
 def udp_sender(message, subnet):
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sender:
         logging.info(f"На новые подключенные устр-ва будет отправлено сообщение '{message}'")
         for ip in ipaddress.ip_network(subnet).hosts():
             sender.sendto(bytes(message, 'utf-8'), (str(ip), 65212))
-
-
 class Scanner:
     def __init__(self, host):
         self.host = host
@@ -62,22 +59,18 @@ class Scanner:
             socket_protocol = socket.IPPROTO_IP
         else:
             socket_protocol = socket.IPPROTO_ICMP
-
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket_protocol)
         self.socket.bind((host, 0))
         self.socket.setsockopt(socket.IPPROTO_IP, socket.IP_HDRINCL, 1)
         if os.name == 'nt':
             self.socket.ioctl(socket.SIO_RCVALL, socket.RCVALL_ON)
-
     def sniff(self, message, subnet):
         host_up = set([f'{str(self.host)} *'])
         try:
             while True:
                 # Читаем пакет
                 raw_buffer = self.socket.recvfrom(65535)[0]
-
                 ip_header = IP(raw_buffer[0:20])
-
                 # Нас интересует ICMP-заголовок из пакета
                 if ip_header.protocol == "ICMP":
                     # Определяем где находится ICMP пакет
@@ -94,7 +87,6 @@ class Scanner:
                                 if tgt != self.host and tgt not in host_up:
                                     host_up.add(str(ip_header.src_address))
                                     logging.info(f'Host Up: {tgt}')
-
         except KeyboardInterrupt:
             # если мы в Windows, выключаем неизбирательный режим
             if os.name == 'nt':
@@ -107,7 +99,6 @@ class Scanner:
             logging.info(f'{host}')
         logging.info('')
         sys.exit()
-
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='UDP Sniffer and Sender')
     parser.add_argument('--subnet', type=str, required=True, help='Subnet in CIDR notation (e.g., 10.0.0.0/24)')
